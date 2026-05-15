@@ -39,6 +39,7 @@ private struct MemberProfileRow: Decodable {
     let activeGymId: String?
     let firstName: String?
     let lastName: String?
+    let birthDate: String?
     let age: Int?
     let heightCm: Double?
     let weightKg: Double?
@@ -52,11 +53,32 @@ private struct MemberProfileRow: Decodable {
         case activeGymId = "active_gym_id"
         case firstName = "first_name"
         case lastName = "last_name"
+        case birthDate = "birth_date"
         case age
         case heightCm = "height_cm"
         case weightKg = "weight_kg"
         case goal
         case avatarUrl = "avatar_url"
+    }
+}
+
+private struct MemberWeightLogRow: Decodable {
+    let id: String
+    let userId: String
+    let memberId: String
+    let gymId: String
+    let loggedAt: String
+    let weightKg: Double
+    let notes: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case userId = "user_id"
+        case memberId = "member_id"
+        case gymId = "gym_id"
+        case loggedAt = "logged_at"
+        case weightKg = "weight_kg"
+        case notes
     }
 }
 
@@ -245,7 +267,7 @@ final class MemberRepository {
         Member(
             id: memberRow.id,
             userId: memberRow.userId,
-            gymId: profile?.gymId ?? memberRow.gymId,
+            gymId: memberRow.gymId,
             fullName: memberRow.fullName ?? "",
             firstName: profile?.firstName,
             lastName: profile?.lastName,
@@ -256,17 +278,78 @@ final class MemberRepository {
             subscriptionStartDate: memberRow.subscriptionStartDate,
             subscriptionEndDate: memberRow.subscriptionEndDate,
             avatarUrl: profile?.avatarUrl ?? memberRow.avatarUrl,
-            age: profile?.age,
+            birthDate: profile?.birthDate,
+            fallbackAge: profile?.age,
             heightCm: profile?.heightCm,
             weightKg: profile?.weightKg,
             goal: profile?.goal
         )
     }
 
+    func getWeightLogs() async throws -> [MemberWeightLog] {
+        let rows: [MemberWeightLogRow] = try await client
+            .from("member_weight_logs")
+            .select()
+            .order("logged_at", ascending: true)
+            .execute()
+            .value
+
+        return rows.map(toWeightLog)
+    }
+
+    func addWeightLog(member: Member, weightKg: Double, loggedAt: Date, notes: String?) async throws {
+        let session = try await client.auth.session
+
+        struct InsertPayload: Encodable {
+            let userId: String
+            let memberId: String
+            let gymId: String
+            let loggedAt: String
+            let weightKg: Double
+            let notes: String?
+
+            enum CodingKeys: String, CodingKey {
+                case userId = "user_id"
+                case memberId = "member_id"
+                case gymId = "gym_id"
+                case loggedAt = "logged_at"
+                case weightKg = "weight_kg"
+                case notes
+            }
+        }
+
+        let cleanNotes = notes?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let payload = InsertPayload(
+            userId: session.user.id.uuidString,
+            memberId: member.id,
+            gymId: member.gymId,
+            loggedAt: MemberWeightLog.storageDateString(from: loggedAt),
+            weightKg: weightKg,
+            notes: cleanNotes?.isEmpty == true ? nil : cleanNotes
+        )
+
+        try await client
+            .from("member_weight_logs")
+            .insert(payload)
+            .execute()
+    }
+
+    private func toWeightLog(_ row: MemberWeightLogRow) -> MemberWeightLog {
+        MemberWeightLog(
+            id: row.id,
+            userId: row.userId,
+            memberId: row.memberId,
+            gymId: row.gymId,
+            loggedAt: row.loggedAt,
+            weightKg: row.weightKg,
+            notes: row.notes
+        )
+    }
+
     func updateProfile(
         firstName: String?,
         lastName: String?,
-        age: Int?,
+        birthDate: String?,
         heightCm: Double?,
         weightKg: Double?,
         goal: String?,
@@ -278,7 +361,7 @@ final class MemberRepository {
         struct UpdatePayload: Encodable {
             let firstName: String?
             let lastName: String?
-            let age: Int?
+            let birthDate: String?
             let heightCm: Double?
             let weightKg: Double?
             let goal: String?
@@ -287,21 +370,36 @@ final class MemberRepository {
             enum CodingKeys: String, CodingKey {
                 case firstName = "first_name"
                 case lastName = "last_name"
-                case age
+                case birthDate = "birth_date"
                 case heightCm = "height_cm"
                 case weightKg = "weight_kg"
                 case goal
                 case avatarUrl = "avatar_url"
             }
+
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encodeIfPresent(firstName, forKey: .firstName)
+                try c.encodeIfPresent(lastName, forKey: .lastName)
+                try c.encodeIfPresent(birthDate, forKey: .birthDate)
+                try c.encodeIfPresent(heightCm, forKey: .heightCm)
+                try c.encodeIfPresent(weightKg, forKey: .weightKg)
+                try c.encodeIfPresent(goal, forKey: .goal)
+                try c.encodeIfPresent(avatarUrl, forKey: .avatarUrl)
+            }
         }
+        let trimmedAvatar = avatarUrl?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let avatarForPayload: String? =
+            trimmedAvatar.flatMap { $0.isEmpty ? nil : $0 }
+
         let payload = UpdatePayload(
             firstName: firstName?.isEmpty == true ? nil : firstName,
             lastName: lastName?.isEmpty == true ? nil : lastName,
-            age: age,
+            birthDate: birthDate?.isEmpty == true ? nil : birthDate,
             heightCm: heightCm,
             weightKg: weightKg,
             goal: goal?.isEmpty == true ? nil : goal,
-            avatarUrl: avatarUrl
+            avatarUrl: avatarForPayload
         )
         try await client
             .from("member_profiles")

@@ -40,6 +40,8 @@ final class PlanRepository {
             .from("plans")
             .select()
             .eq("gym_id", value: gymId)
+            .order("price", ascending: true)
+            .order("title", ascending: true)
             .execute()
             .value
         return rows.map(\.toPlan)

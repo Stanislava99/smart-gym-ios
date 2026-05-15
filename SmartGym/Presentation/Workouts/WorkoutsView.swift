@@ -13,35 +13,36 @@ struct WorkoutsView: View {
         NavigationStack {
             Group {
                 if viewModel.isLoading {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    WorkoutsLoadingView()
+                } else if let error = viewModel.error {
+                    ErrorWithRetryView(message: error) {
+                        Task { await viewModel.loadWorkouts() }
+                    }
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: AppSpacing.cardGap) {
-                            // Monthly strike summary
-                            PrimaryCard {
-                                VStack(alignment: .leading, spacing: AppSpacing.sm) {
-                                    Text("Monthly Strike")
-                                        .font(.headline)
-                                        .foregroundStyle(AppColors.textPrimary)
-
-                                    // Simple dots for now; can be wired to real per-day data later.
-                                    HStack(spacing: AppSpacing.sm) {
-                                        ForEach(0..<4, id: \.self) { _ in
-                                            HStack(spacing: 4) {
-                                                ForEach(0..<7, id: \.self) { _ in
-                                                    Circle()
-                                                        .fill(AppColors.accentMint)
-                                                        .frame(width: 8, height: 8)
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    Text("\(viewModel.workouts.count) workouts this month")
-                                        .font(.caption)
-                                        .foregroundStyle(AppColors.textSecondary)
+                            // Statistics: workouts this week, kgs this week, workouts this month
+                            VStack(alignment: .leading, spacing: AppSpacing.sm) {
+                                Text("Statistics")
+                                    .font(.headline)
+                                    .foregroundStyle(AppColors.textPrimary)
+                                HStack(spacing: AppSpacing.sm) {
+                                    MetricCard(
+                                        label: "Workouts this week",
+                                        value: "\(viewModel.workoutsThisWeek)",
+                                        accentColor: AppColors.accentMint
+                                    )
+                                    MetricCard(
+                                        label: "Kgs lifted this week",
+                                        value: String(format: "%.0f", viewModel.kgsLiftedThisWeek),
+                                        accentColor: AppColors.accentBlue
+                                    )
                                 }
+                                MetricCard(
+                                    label: "Workouts this month",
+                                    value: "\(viewModel.workoutsThisMonth)",
+                                    accentColor: AppColors.accentLavender
+                                )
                             }
 
                             // List of previous workouts -> Navigate to workout page
@@ -56,13 +57,17 @@ struct WorkoutsView: View {
                             } else {
                                 ForEach(viewModel.workouts, id: \.id) { workout in
                                     NavigationLink {
-                                        WorkoutDetailView(workoutId: workout.id)
+                                        WorkoutDetailView(
+                                            workoutId: workout.id,
+                                            onWorkoutDeleted: { viewModel.removeWorkout(id: workout.id) },
+                                            onWorkoutUpdated: { viewModel.updateWorkoutInList($0) }
+                                        )
                                     } label: {
                                         ListRow(
                                             icon: "figure.run",
                                             title: workout.title,
                                             subtitle: Self.formattedDate(workout.workoutDate),
-                                            action: {}
+                                            contentOnly: true
                                         )
                                     }
                                     .buttonStyle(.plain)
@@ -85,6 +90,53 @@ struct WorkoutsView: View {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // MARK: - Loading (skeleton matching content)
+
+    private struct WorkoutsLoadingView: View {
+        var body: some View {
+            ScrollView {
+                VStack(alignment: .leading, spacing: AppSpacing.cardGap) {
+                    VStack(alignment: .leading, spacing: AppSpacing.sm) {
+                        SkeletonView(height: 18)
+                            .frame(width: 100)
+                        HStack(spacing: AppSpacing.sm) {
+                            SkeletonView()
+                                .frame(height: 72)
+                                .frame(maxWidth: .infinity)
+                                .clipShape(RoundedRectangle(cornerRadius: AppRadius.md))
+                            SkeletonView()
+                                .frame(height: 72)
+                                .frame(maxWidth: .infinity)
+                                .clipShape(RoundedRectangle(cornerRadius: AppRadius.md))
+                        }
+                        SkeletonView()
+                            .frame(height: 72)
+                            .frame(maxWidth: .infinity)
+                            .clipShape(RoundedRectangle(cornerRadius: AppRadius.md))
+                    }
+                    SkeletonView(height: 18)
+                        .frame(width: 160)
+                    ForEach(0..<4, id: \.self) { _ in
+                        HStack(spacing: AppSpacing.base) {
+                            SkeletonView(width: 24, height: 24)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                            VStack(alignment: .leading, spacing: 4) {
+                                SkeletonView(height: 14)
+                                    .frame(width: 160)
+                                SkeletonView(height: 12)
+                                    .frame(width: 100)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(.vertical, AppSpacing.md)
+                        .padding(.horizontal, AppSpacing.base)
+                    }
+                }
+                .padding(AppSpacing.base)
             }
         }
     }

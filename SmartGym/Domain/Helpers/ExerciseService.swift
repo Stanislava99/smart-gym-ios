@@ -17,15 +17,14 @@ final class ExerciseService {
     private init() {}
 
     func loadIfNeeded() async {
-        guard !isLoaded else { return }
+        guard !isLoaded else {
+            return
+        }
         do {
             let catalog = try ExerciseJsonLoader.loadCatalog()
             exercises = catalog.exercises
             isLoaded = true
-            print("ExerciseService: loaded \(exercises.count) exercises into memory")
         } catch {
-            // In this first iteration we only log; callers will see empty results.
-            print("ExerciseService load error:", error)
             exercises = []
             isLoaded = true
         }
@@ -51,13 +50,37 @@ final class ExerciseService {
         exercises.first { $0.id == id }
     }
 
+    /// Maps exercise-DB muscle IDs to the body heatmap view's region IDs so all
+    /// primary and secondary muscles show on the heatmap.
+    private static func normalizedMuscleIdForHeatmap(_ raw: MuscleId) -> MuscleId {
+        let map: [MuscleId: MuscleId] = [
+            "upper_chest": "chest",
+            "quadriceps": "quads",
+            "lower_back": "back",
+            "middle_back": "back",
+            "lats": "back",
+            "traps": "shoulders",
+            "rear_shoulders": "shoulders",
+            "forearms": "biceps",
+        ]
+        return map[raw] ?? raw
+    }
+
+    /// Counts primary and secondary muscles for the given exercise IDs. Primary muscles
+    /// get weight 2 so they appear hotter on the heatmap; secondary get weight 1.
+    /// Exercise-DB muscle IDs are normalized to the body view's regions (e.g. quadriceps → quads).
     func computeTrainedMuscles(forExerciseIds ids: [String]) -> [MuscleId: Int] {
         var counts: [MuscleId: Int] = [:]
         let lookup = Dictionary(uniqueKeysWithValues: exercises.map { ($0.id, $0) })
         for id in ids {
             guard let exercise = lookup[id] else { continue }
             for muscle in exercise.primaryMuscles {
-                counts[muscle, default: 0] += 1
+                let key = Self.normalizedMuscleIdForHeatmap(muscle)
+                counts[key, default: 0] += 2
+            }
+            for muscle in exercise.secondaryMuscles {
+                let key = Self.normalizedMuscleIdForHeatmap(muscle)
+                counts[key, default: 0] += 1
             }
         }
         return counts

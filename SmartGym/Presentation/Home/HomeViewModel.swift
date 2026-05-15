@@ -13,6 +13,8 @@ final class HomeViewModel {
     var workingHours: [GymWorkingHours] = []
     var memberships: [(Member, Gym)] = []
     var referralOverview: MemberReferralOverview?
+    var groupTrainings: [GroupTraining] = []
+    var nextGroupTraining: NextGroupTraining?
     var isLoading = true
     var error: String?
 
@@ -20,10 +22,14 @@ final class HomeViewModel {
     /// TODO: Wire this to real workout data once available.
     var hasWorkoutToday: Bool = false
 
+    /// ISO dates (YYYY-MM-DD) in the current week that have at least one workout.
+    var weeklyWorkoutDates: Set<String> = []
+
     private let memberRepository = MemberRepository()
     private let gymRepository = GymRepository()
     private let referralRepository = ReferralRepository()
     private let workoutRepository = WorkoutRepository()
+    private let groupTrainingRepository = GroupTrainingRepository()
 
     /// Open/closed status based on current time and working hours
     var gymOpenStatus: GymOpenStatus {
@@ -83,9 +89,11 @@ final class HomeViewModel {
         }
     }
 
-    func loadMember() async {
+    func loadMember(showLoading: Bool = true) async {
         print("[HomeViewModel] loadMember: starting")
-        isLoading = true
+        if showLoading {
+            isLoading = true
+        }
         error = nil
         do {
             member = try await memberRepository.getCurrentMember()
@@ -107,23 +115,65 @@ final class HomeViewModel {
                     memberId: currentMember.id,
                     gymId: currentMember.gymId
                 )
+                groupTrainings = (try? await groupTrainingRepository.getGroupTrainings(gymId: currentMember.gymId)) ?? []
+                nextGroupTraining = try? await groupTrainingRepository.getNextTrainingForMember(
+                    memberId: currentMember.id,
+                    gymId: currentMember.gymId
+                )
 
-                // Check if member has a workout logged today for Weekly Strikes.
-                let isoFormatter = DateFormatter()
-                isoFormatter.locale = Locale(identifier: "en_US_POSIX")
-                isoFormatter.dateFormat = "yyyy-MM-dd"
-                let todayIso = isoFormatter.string(from: Date())
-                hasWorkoutToday = await workoutRepository.hasWorkout(on: todayIso, memberId: currentMember.id)
+                if FeatureFlags.weeklyStreaksEnabled {
+                    // Check if member has a workout logged today for Weekly Strikes.
+                    let isoFormatter = DateFormatter()
+                    isoFormatter.locale = Locale(identifier: "en_US_POSIX")
+                    isoFormatter.dateFormat = "yyyy-MM-dd"
+                    let todayIso = isoFormatter.string(from: Date())
+                    hasWorkoutToday = await workoutRepository.hasWorkout(on: todayIso, memberId: currentMember.id)
+
+                    // Load workouts for the current week to power Weekly Strikes.
+                    let calendar = Calendar.current
+                    let today = Date()
+                    let weekday = calendar.component(.weekday, from: today)
+                    let startOfWeek = calendar.date(
+                        byAdding: .day,
+                        value: -(weekday - calendar.firstWeekday),
+                        to: calendar.startOfDay(for: today)
+                    ) ?? today
+                    let endOfWeek = calendar.date(byAdding: .day, value: 6, to: startOfWeek) ?? today
+                    let fromIso = isoFormatter.string(from: startOfWeek)
+                    let toIso = isoFormatter.string(from: endOfWeek)
+                    let weeklyWorkouts = await workoutRepository.getWorkoutsInRange(
+                        memberId: currentMember.id,
+                        fromDate: fromIso,
+                        toDate: toIso
+                    )
+                    weeklyWorkoutDates = Set(weeklyWorkouts.map(\.workoutDate))
+                } else {
+                    hasWorkoutToday = false
+                    weeklyWorkoutDates = []
+                }
             } else {
                 referralOverview = nil
+                groupTrainings = []
+                nextGroupTraining = nil
                 hasWorkoutToday = false
+                weeklyWorkoutDates = []
             }
         } catch {
             print("[HomeViewModel] loadMember: ERROR - \(error)")
-            self.error = error.localizedDescription
+            if showLoading || member == nil {
+                self.error = error.localizedDescription
+            }
         }
         print("[HomeViewModel] loadMember: done, error=\(error ?? "nil")")
-        isLoading = false
+        if showLoading {
+            isLoading = false
+        }
+    }
+
+    func refreshMember() async {
+        async let minimumVisibleRefresh: Void = Task.sleep(nanoseconds: 450_000_000)
+        await loadMember(showLoading: false)
+        _ = try? await minimumVisibleRefresh
     }
 
     func switchGym(member: Member, gym: Gym) async {

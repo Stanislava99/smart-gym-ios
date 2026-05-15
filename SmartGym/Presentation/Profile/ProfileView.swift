@@ -7,10 +7,12 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct ProfileView: View {
     @Bindable var viewModel: ProfileViewModel
     var onSignOut: () -> Void
+    @State private var shareText: ShareText?
 
     private func goalDisplayText(_ goal: String?) -> String {
         guard let g = goal, !g.isEmpty else { return "—" }
@@ -20,12 +22,58 @@ struct ProfileView: View {
         return g
     }
 
+    private func dailyCaloriesDisplay(for member: Member) -> String {
+        guard let weightKg = member.weightKg, weightKg > 0 else {
+            return "Set weight"
+        }
+
+        var estimate = weightKg * 30
+        if let goal = member.goal?.trimmingCharacters(in: .whitespacesAndNewlines),
+           let goalWeight = Double(goal),
+           goalWeight > 0 {
+            if goalWeight < weightKg - 0.5 {
+                estimate -= 300
+            } else if goalWeight > weightKg + 0.5 {
+                estimate += 300
+            }
+        }
+
+        let roundedEstimate = Int((estimate / 50).rounded() * 50)
+        return "\(roundedEstimate) kcal"
+    }
+
+    private func currentWeightDisplay(for member: Member) -> String {
+        (viewModel.weightLogs.last?.weightKg ?? member.weightKg).map { String(format: "%.1f kg", $0) } ?? "—"
+    }
+
+    private func weightProgressSubtitle(for member: Member) -> String {
+        guard let start = member.weightKg, let latest = viewModel.weightLogs.last?.weightKg else {
+            return "Log body weight and follow your trend"
+        }
+
+        let delta = latest - start
+        if abs(delta) < 0.05 {
+            return "No change from start weight yet"
+        }
+        return "\(delta > 0 ? "+" : "")\(String(format: "%.1f", delta)) kg from start"
+    }
+
+    private func shareInvite() {
+        Task {
+            let message = await viewModel.inviteFriendShareMessage()
+            shareText = ShareText(text: message)
+        }
+    }
+
     var body: some View {
         NavigationStack {
             Group {
                 if viewModel.isLoading {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ProfileLoadingView()
+                } else if let error = viewModel.error {
+                    ErrorWithRetryView(message: error) {
+                        Task { await viewModel.loadProfile() }
+                    }
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: AppSpacing.cardGap) {
@@ -48,12 +96,18 @@ struct ProfileView: View {
 
                                     HStack(spacing: AppSpacing.sm) {
                                         Button {
-                                            // Native share of referral code handled via ShareLink button in Referral card below.
+                                            shareInvite()
                                         } label: {
-                                            Image(systemName: "square.and.arrow.up")
-                                                .font(.body)
-                                                .foregroundStyle(AppColors.textPrimary)
+                                            if viewModel.isPreparingShare {
+                                                ProgressView()
+                                                    .controlSize(.small)
+                                            } else {
+                                                Image(systemName: "square.and.arrow.up")
+                                                    .font(.body)
+                                                    .foregroundStyle(AppColors.textPrimary)
+                                            }
                                         }
+                                        .disabled(viewModel.isPreparingShare)
                                         NavigationLink {
                                             EditProfileView(viewModel: viewModel)
                                         } label: {
@@ -65,31 +119,70 @@ struct ProfileView: View {
                                 }
                                 .padding(.vertical, AppSpacing.base)
 
-                                // Metric cards: Start weight, Goal, Daily calories
-                                HStack(spacing: AppSpacing.sm) {
+                                // Metric cards: Start weight, current weight, goal, daily calories
+                                LazyVGrid(
+                                    columns: [
+                                        GridItem(.flexible(), spacing: AppSpacing.sm),
+                                        GridItem(.flexible(), spacing: AppSpacing.sm)
+                                    ],
+                                    spacing: AppSpacing.sm
+                                ) {
                                     MetricCard(
                                         label: "Start weight",
                                         value: member.weightKg.map { String(format: "%.1f kg", $0) } ?? "—",
                                         accentColor: AppColors.accentMint
                                     )
                                     MetricCard(
-                                        label: "Goal",
-                                        value: goalDisplayText(member.goal),
+                                        label: "Current",
+                                        value: currentWeightDisplay(for: member),
                                         accentColor: AppColors.accentBlue
                                     )
                                     MetricCard(
+                                        label: "Goal",
+                                        value: goalDisplayText(member.goal),
+                                        accentColor: AppColors.accentLavender
+                                    )
+                                    MetricCard(
                                         label: "Daily calories",
-                                        value: "—",
+                                        value: dailyCaloriesDisplay(for: member),
                                         accentColor: AppColors.accentOrange
                                     )
                                 }
 
+                                NavigationLink {
+                                    WeightProgressView(viewModel: viewModel)
+                                } label: {
+                                    PrimaryCard {
+                                        HStack(spacing: AppSpacing.base) {
+                                            Image(systemName: "chart.xyaxis.line")
+                                                .font(.title3)
+                                                .foregroundStyle(AppColors.accentLavender)
+                                                .frame(width: 32)
+
+                                            VStack(alignment: .leading, spacing: 4) {
+                                                Text("Weight Progress")
+                                                    .font(.system(size: 16, weight: .semibold))
+                                                    .foregroundStyle(AppColors.textPrimary)
+                                                Text(weightProgressSubtitle(for: member))
+                                                    .font(.caption)
+                                                    .foregroundStyle(AppColors.textSecondary)
+                                            }
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                                            Image(systemName: "chevron.right")
+                                                .font(.caption)
+                                                .foregroundStyle(AppColors.textTertiary)
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.plain)
+
                                 // Referral & points card
                                 if let overview = viewModel.referralOverview {
-                                    ReferralPointsCard(overview: overview)
+                                    ReferralPointsCard(overview: overview, onShare: shareInvite)
                                 }
 
-                                // Activity / settings list
+                                // Quick actions
                                 PrimaryCard {
                                     VStack(spacing: 0) {
                                         NavigationLink {
@@ -99,7 +192,7 @@ struct ProfileView: View {
                                                 icon: "pencil",
                                                 title: "Edit Profile",
                                                 subtitle: "Name, image, weight, goal",
-                                                action: {}
+                                                contentOnly: true
                                             )
                                         }
                                         .buttonStyle(.plain)
@@ -110,13 +203,13 @@ struct ProfileView: View {
                                             .padding(.horizontal, AppSpacing.base)
 
                                         NavigationLink {
-                                            SettingsView()
+                                            WeightProgressView(viewModel: viewModel)
                                         } label: {
                                             ListRow(
-                                                icon: "gearshape",
-                                                title: "Settings",
-                                                subtitle: "Goals, preferences",
-                                                action: {}
+                                                icon: "chart.xyaxis.line",
+                                                title: "Weight Progress",
+                                                subtitle: "Log weight and view your graph",
+                                                contentOnly: true
                                             )
                                         }
                                         .buttonStyle(.plain)
@@ -138,22 +231,6 @@ struct ProfileView: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 .padding(.vertical, AppSpacing.base)
-
-                                PrimaryCard {
-                                    VStack(spacing: 0) {
-                                        NavigationLink {
-                                            SettingsView()
-                                        } label: {
-                                            ListRow(
-                                                icon: "gearshape",
-                                                title: "Settings",
-                                                subtitle: "Goals, preferences",
-                                                action: {}
-                                            )
-                                        }
-                                        .buttonStyle(.plain)
-                                    }
-                                }
                             }
 
                             Button("Sign Out") {
@@ -169,22 +246,131 @@ struct ProfileView: View {
                         }
                         .padding(AppSpacing.base)
                     }
+                    .refreshable {
+                        await viewModel.refreshProfile()
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(AppColors.canvas)
+            .animation(.easeInOut(duration: 0.25), value: viewModel.isLoading)
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        SettingsView()
-                    } label: {
-                        Image(systemName: "gearshape")
-                            .foregroundStyle(AppColors.textPrimary)
+        }
+        .sheet(item: $shareText) { item in
+            ActivityView(activityItems: [item.text])
+        }
+    }
+}
+
+private struct ShareText: Identifiable {
+    let id = UUID()
+    let text: String
+}
+
+private struct ActivityView: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+// MARK: - Profile loading (skeleton matching content)
+
+private struct ProfileLoadingView: View {
+    private let metricColumns = [
+        GridItem(.flexible(), spacing: AppSpacing.sm),
+        GridItem(.flexible(), spacing: AppSpacing.sm)
+    ]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: AppSpacing.cardGap) {
+                HStack(alignment: .top, spacing: AppSpacing.base) {
+                    SkeletonView(width: 80, height: 80)
+                        .clipShape(Circle())
+                    VStack(alignment: .leading, spacing: AppSpacing.xs) {
+                        SkeletonView(height: 20)
+                            .frame(width: 160)
+                        SkeletonView(height: 14)
+                            .frame(width: 200)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    HStack(spacing: AppSpacing.sm) {
+                        SkeletonView(width: 36, height: 36)
+                            .clipShape(Circle())
+                        SkeletonView(width: 36, height: 36)
+                            .clipShape(Circle())
                     }
                 }
+                .padding(.vertical, AppSpacing.base)
+
+                LazyVGrid(columns: metricColumns, spacing: AppSpacing.sm) {
+                    ForEach(0..<4, id: \.self) { _ in
+                        SkeletonView()
+                            .frame(height: 72)
+                            .frame(maxWidth: .infinity)
+                            .clipShape(RoundedRectangle(cornerRadius: AppRadius.md))
+                    }
+                }
+
+                PrimaryCard {
+                    HStack(spacing: AppSpacing.base) {
+                        SkeletonView(width: 32, height: 32)
+                            .clipShape(RoundedRectangle(cornerRadius: AppRadius.sm))
+                        VStack(alignment: .leading, spacing: 4) {
+                            SkeletonView(height: 16)
+                                .frame(width: 130)
+                            SkeletonView(height: 12)
+                                .frame(width: 200)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        SkeletonView(width: 12, height: 14)
+                    }
+                }
+
+                PrimaryCard {
+                    VStack(spacing: 0) {
+                        HStack(spacing: AppSpacing.base) {
+                            SkeletonView(width: 24, height: 24)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                            VStack(alignment: .leading, spacing: 4) {
+                                SkeletonView(height: 14)
+                                    .frame(width: 100)
+                                SkeletonView(height: 12)
+                                    .frame(width: 160)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(.vertical, AppSpacing.md)
+                        Rectangle()
+                            .fill(AppColors.borderSubtle)
+                            .frame(height: 1)
+                            .padding(.horizontal, AppSpacing.base)
+                        HStack(spacing: AppSpacing.base) {
+                            SkeletonView(width: 24, height: 24)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                            VStack(alignment: .leading, spacing: 4) {
+                                SkeletonView(height: 14)
+                                    .frame(width: 110)
+                                SkeletonView(height: 12)
+                                    .frame(width: 180)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(.vertical, AppSpacing.md)
+                    }
+                }
+
+                SkeletonView(height: 44)
+                    .frame(width: 120)
+                    .clipShape(RoundedRectangle(cornerRadius: AppRadius.sm))
+                    .padding(.top, AppSpacing.lg)
             }
+            .padding(AppSpacing.base)
         }
     }
 }
@@ -193,6 +379,7 @@ struct ProfileView: View {
 
 private struct ReferralPointsCard: View {
     let overview: MemberReferralOverview
+    let onShare: () -> Void
 
     private var pointsText: String {
         "\(overview.pointsBalance) pts"
@@ -203,13 +390,6 @@ private struct ReferralPointsCard: View {
             return "Earn points by referring friends."
         }
         return "Approx. \(overview.moneyValueDisplay) available toward your membership."
-    }
-
-    private var shareMessage: String {
-        if let code = overview.referralCode, !code.isEmpty {
-            return "Join me at Smart Gym! Use my referral code \(code) when signing up."
-        }
-        return "Join me at Smart Gym! Ask staff about the referral program."
     }
 
     var body: some View {
@@ -238,17 +418,15 @@ private struct ReferralPointsCard: View {
                     }
                 }
 
-                if overview.referralCode != nil {
-                    HStack {
-                        ShareLink(item: shareMessage) {
-                            Label("Invite a friend", systemImage: "square.and.arrow.up")
-                                .font(.system(size: 14, weight: .semibold))
-                        }
-                        .tint(AppColors.accentLavender)
-                        Spacer()
+                HStack {
+                    Button(action: onShare) {
+                        Label("Invite a friend", systemImage: "square.and.arrow.up")
+                            .font(.system(size: 14, weight: .semibold))
                     }
-                    .padding(.top, AppSpacing.sm)
+                    .tint(AppColors.accentLavender)
+                    Spacer()
                 }
+                .padding(.top, AppSpacing.sm)
             }
         }
     }

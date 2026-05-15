@@ -950,6 +950,76 @@
         "legs"
       ],
       "instructions": []
+    },
+    {
+      "id": "walking",
+      "name": "Walking",
+      "category": "cardio",
+      "equipment": "bodyweight",
+      "difficulty": "beginner",
+      "primaryMuscles": ["legs"],
+      "secondaryMuscles": ["core"],
+      "instructions": []
+    },
+    {
+      "id": "running",
+      "name": "Running",
+      "category": "cardio",
+      "equipment": "bodyweight",
+      "difficulty": "beginner",
+      "primaryMuscles": ["legs"],
+      "secondaryMuscles": ["core"],
+      "instructions": []
+    },
+    {
+      "id": "stair_climbing",
+      "name": "Stair Climbing",
+      "category": "cardio",
+      "equipment": "bodyweight",
+      "difficulty": "beginner",
+      "primaryMuscles": ["legs"],
+      "secondaryMuscles": ["core"],
+      "instructions": []
+    },
+    {
+      "id": "cycling",
+      "name": "Cycling",
+      "category": "cardio",
+      "equipment": "bike",
+      "difficulty": "beginner",
+      "primaryMuscles": ["legs"],
+      "secondaryMuscles": ["core"],
+      "instructions": []
+    },
+    {
+      "id": "rowing",
+      "name": "Rowing",
+      "category": "cardio",
+      "equipment": "rower",
+      "difficulty": "beginner",
+      "primaryMuscles": ["back", "legs"],
+      "secondaryMuscles": ["core", "arms"],
+      "instructions": []
+    },
+    {
+      "id": "elliptical",
+      "name": "Elliptical",
+      "category": "cardio",
+      "equipment": "elliptical",
+      "difficulty": "beginner",
+      "primaryMuscles": ["legs"],
+      "secondaryMuscles": ["core"],
+      "instructions": []
+    },
+    {
+      "id": "jump_rope",
+      "name": "Jump Rope",
+      "category": "cardio",
+      "equipment": "bodyweight",
+      "difficulty": "beginner",
+      "primaryMuscles": ["legs"],
+      "secondaryMuscles": ["core", "calves"],
+      "instructions": []
     }
   ]
 }
